@@ -8,38 +8,42 @@ from termcolor import colored
 
 class Visualizer:
     def __init__(self):
-        result_dir = cfg.result_dir
+        result_dir = cfg.result_dir     # 'data/result'
         print(
             colored('the results are saved at {}'.format(result_dir),
                     'yellow'))
 
     def visualize_image(self, output, batch):
-        rgb_pred = output['rgb_map'][0].detach().cpu().numpy()
-        rgb_gt = batch['rgb'][0].detach().cpu().numpy()
+        # compute the mse between the predicted and ground truth rgb
+        rgb_pred = output['rgb_map'][0].detach().cpu().numpy()          # (n, 3), n 是指 H*W 个 pixels 里面发出的光线和 smpl 相交的个数
+        rgb_gt = batch['rgb'][0].detach().cpu().numpy()                 # (n, 3), n 是指 H*W 个 pixels 里面发出的光线和 smpl 相交的个数
         print('mse: {}'.format(np.mean((rgb_pred - rgb_gt)**2)))
 
-        mask_at_box = batch['mask_at_box'][0].detach().cpu().numpy()
+        # fetch `mask_at_box` from original rays sampling
+        mask_at_box = batch['mask_at_box'][0].detach().cpu().numpy()    # (nrays,) == (H * W,)
         H, W = batch['H'].item(), batch['W'].item()
-        mask_at_box = mask_at_box.reshape(H, W)
+        mask_at_box = mask_at_box.reshape(H, W)                         # (H, W)
 
+        # get predicted images using `mask_at_box`
         img_pred = np.zeros((H, W, 3))
         img_pred[mask_at_box] = rgb_pred
 
+        # get ground truth images using `mask_at_box`
         img_gt = np.zeros((H, W, 3))
         img_gt[mask_at_box] = rgb_gt
 
+        # create shub-directory for predicted images and ground truth images
         result_dir = os.path.join(cfg.result_dir, 'comparison')
         os.system('mkdir -p {}'.format(result_dir))
         frame_index = batch['frame_index'].item()
         view_index = batch['cam_ind'].item()
+        # save the predicted images and ground truth images using cv2.imwrite()
         cv2.imwrite(
-            '{}/frame{:04d}_view{:04d}.png'.format(result_dir, frame_index,
-                                                   view_index),
-            (img_pred[..., [2, 1, 0]] * 255))
+            '{}/frame{:04d}_view{:04d}.png'.format(result_dir, frame_index, view_index), (img_pred[..., [2, 1, 0]] * 255)
+        )
         cv2.imwrite(
-            '{}/frame{:04d}_view{:04d}_gt.png'.format(result_dir, frame_index,
-                                                      view_index),
-            (img_gt[..., [2, 1, 0]] * 255))
+            '{}/frame{:04d}_view{:04d}_gt.png'.format(result_dir, frame_index, view_index), (img_gt[..., [2, 1, 0]] * 255)
+        )
 
         # _, (ax1, ax2) = plt.subplots(1, 2)
         # ax1.imshow(img_pred)

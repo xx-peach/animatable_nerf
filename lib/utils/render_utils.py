@@ -22,11 +22,25 @@ def viewmatrix(z, up, pos):
 
 
 def ptstocam(pts, c2w):
+    """ 把 world coordinate 下的 camera origin 给转换到一个指定的 initial camera coordinate 下
+    Arguments:
+        pts - (n, 3), RT[:, :3, 3], 每个 camera 的 origin 在 world coordinate 下的坐标
+        c2w - (3, 3), np.stack([up, vec1, vec2, center], 1), 一个 up vector 是 average 的 initial camera pose, camera2world
+    Returns:
+        tt - (n, 3), 每个 camera 的 origin 在 initial camera coordinate 下的坐标
+    """
     tt = np.matmul(c2w[:3, :3].T, (pts-c2w[:3, 3])[..., np.newaxis])[..., 0]
     return tt
 
 
 def load_cam(ann_file):
+    """ Load Camera Intrinsic and Extrinsic From Parameter File
+    Arguments:
+        ann_file - parameter file path, eg. 'data/zju_mocap/CoreView_313/annots.npy'
+    Returns:
+        K  - a list(), each element is a (3, 3) camera intrinsic matrix
+        RT - a list(), each element is a (4, 4) camera extrinsic matrix
+    """
     if ann_file.endswith('.json'):
         annots = json.load(open(ann_file, 'r'))
         cams = annots['cams']['20190823']
@@ -39,13 +53,13 @@ def load_cam(ann_file):
     lower_row = np.array([[0., 0., 0., 1.]])
 
     for i in range(len(cams['K'])):
-        K.append(np.array(cams['K'][i]))
-        K[i][:2] = K[i][:2] * cfg.ratio
+        K.append(np.array(cams['K'][i]))    # (3, 3)
+        K[i][:2] = K[i][:2] * cfg.ratio     # (3, 3), resize the c_x and c_y
 
-        r = np.array(cams['R'][i])
-        t = np.array(cams['T'][i]) / 1000.
-        r_t = np.concatenate([r, t], 1)
-        RT.append(np.concatenate([r_t, lower_row], 0))
+        r = np.array(cams['R'][i])          # (3, 3)
+        t = np.array(cams['T'][i]) / 1000.  # (3, 1)
+        r_t = np.concatenate([r, t], 1)     # (3, 4)
+        RT.append(np.concatenate([r_t, lower_row], 0))  # (4, 4)
 
     return K, RT
 
@@ -59,30 +73,38 @@ def get_center_rayd(K, RT):
 
 
 def gen_path(RT, center=None):
+    """ Generate Fake Rendering Views for Novel-View Visualization
+    Arguments:
+        RT - a list(), each element is a (4, 4) camera extrinsic matrix
+    Returns:
+
+    """
     lower_row = np.array([[0., 0., 0., 1.]])
 
     # transfer RT to camera_to_world matrix
-    RT = np.array(RT)
-    RT[:] = np.linalg.inv(RT[:])
+    RT = np.array(RT)               # (c, 4, 4), world2camera
+    RT[:] = np.linalg.inv(RT[:])    # (c, 4, 4), camera2world
 
-    RT = np.concatenate([RT[:, :, 1:2], RT[:, :, 0:1],
-                         -RT[:, :, 2:3], RT[:, :, 3:4]], 2)
+    # https://github.com/Fyusion/LLFF/issues/10 中提到的一个比较奇怪的坐标系
+    # from the point of view of the camera, the three axes are`[ down, right, backwards ]`
+    RT = np.concatenate([RT[:, :, 1:2], RT[:, :, 0:1], -RT[:, :, 2:3], RT[:, :, 3:4]], 2)
 
-    up = normalize(RT[:, :3, 0].sum(0))  # average up vector
-    z = normalize(RT[0, :3, 2])
-    vec1 = normalize(np.cross(z, up))
-    vec2 = normalize(np.cross(up, vec1))
+    # 根据 average up vector 和 first gaze vector 来算一个初始 camera2world matrix
+    up = normalize(RT[:, :3, 0].sum(0))     # average up vector(这是确首先定下来的) <- t_a == y_a
+    z  = normalize(RT[0, :3, 2])            # g vector(这是0号camera的g) <- g_0 == -z_0
+    vec1 = normalize(np.cross(z, up))       # g_0 x t_a(借用0号的g来算固定的一定垂直于t_a的x) <- gt_a == x_a
+    vec2 = normalize(np.cross(up, vec1))    # t_a x gt_a(用已经固定的t_a和gt_a来算出最后的g_a) <- g_a
     z_off = 0
-
+    # add average camera origin to the initial rotation matrix
     if center is None:
         center = RT[:, :3, 3].mean(0)
         z_off = 1.3
-
+    # concatenate initial rotation matrix and average camera origin to get the initial (4, 4) transformation matrix
     c2w = np.stack([up, vec1, vec2, center], 1)
 
     # get radii for spiral path
-    tt = ptstocam(RT[:, :3, 3], c2w).T
-    rads = np.percentile(np.abs(tt), 80, -1)
+    tt = ptstocam(RT[:, :3, 3], c2w).T          # (3, c)
+    rads = np.percentile(np.abs(tt), 80, -1)    # (3,)
     rads = rads * 1.3
     rads = np.array(list(rads) + [1.])
 
@@ -92,8 +114,7 @@ def gen_path(RT, center=None):
         cam_pos = np.array([0, np.sin(theta), np.cos(theta), 1] * rads)
         cam_pos_world = np.dot(c2w[:3, :4], cam_pos)
         # z axis
-        z = normalize(cam_pos_world -
-                      np.dot(c2w[:3, :4], np.array([z_off, 0, 0, 1.])))
+        z = normalize(cam_pos_world - np.dot(c2w[:3, :4], np.array([z_off, 0, 0, 1.])))
         # vector -> 3x4 matrix (camera_to_world)
         mat = viewmatrix(z, up, cam_pos_world)
 

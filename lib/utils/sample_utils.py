@@ -321,18 +321,30 @@ def sample_closest_points(src: torch.Tensor, ref: torch.Tensor, values: torch.Te
 
 
 def sample_blend_closest_points(src: torch.Tensor, ref: torch.Tensor, values: torch.Tensor, K: int = 5, exp: float = 1e-8):
+    """ Find the Closest Reference Point of Input Source Point and Return its Initial Blend Weight
+    Arguments:
+        src    - (batch_size, chunk*N_samples, 3), sampled points in smpl coordinate
+        ref    - (batch_size, 6890, 3), 6890 smpl vertices of this frame, in smpl coordinate
+        values - (batch_size, 6890, 24), original blend weight of each vertex relative to each joint in T-pose
+        K      - int, number of neighbors in the k-nearest neighbor algorithm
+        exp    - float, maximum error tolerance in the k-nearest neighbor algorithm
+    Returns:
+        sampled - (batch_size, chunk*N_samples, 24), each sample point 从 k 个 nearest neighbors 加权得来的 blend weights
+        dists   - (batch_size, chunk*N_samples, 1), each sample point 与 k 个 nearest neighbors 之间的加权距离
+    """
     # not so useful to aggregate all K points
-    n_batch, n_points, _ = src.shape
-    ret = guard_knn_points(src, ref, K=K)
-    dists, vert_ids = ret.dists, ret.idx  # (n_batch, n_points, K)
-    values = values.view(-1, values.shape[-1])  # (n, D)
+    n_batch, n_points, _ = src.shape            # batch_size, chunk*N_samples
+    # https://pytorch3d.readthedocs.io/en/latest/_modules/pytorch3d/ops/knn.html
+    ret = guard_knn_points(src, ref, K=K)       # {dists, idx, nn}
+    dists, vert_ids = ret.dists, ret.idx        # (batch_size, chunk*N_samples, K)
+    values = values.view(-1, values.shape[-1])  # (batch_size*6890, 24)
     # sampled = values[vert_ids]  # (n_batch, n_points, K, D)
-    disp = 1 / (dists + exp)  # inverse distance: disparity
-    weights = disp / disp.sum(dim=-1, keepdim=True)  # normalize distance by K
-    dists = torch.einsum('ijk,ijk->ij', dists, weights)
+    disp = 1 / (dists + exp)                                # inverse distance: disparity, (batch_size, chunk*N_samples, K)
+    weights = disp / disp.sum(dim=-1, keepdim=True)         # normalize distance by K, (batch_size, chunk*N_samples, K)
+    dists = torch.einsum('ijk, ijk -> ij', dists, weights)  # (batch_size, chunk*N_samples)
     # sampled *= weights[..., None]  # augment weight in last dim for bones # written separatedly to avoid OOM
     # sampled = sampled.sum(dim=-2)  # sum over second to last for weighted bw
-    sampled = torch.einsum('ijkl,ijk->ijl', values[vert_ids], weights)
+    sampled = torch.einsum('ijkl, ijk -> ijl', values[vert_ids], weights)
     return sampled.view(n_batch, n_points, -1), dists.view(n_batch, n_points, 1)
 
 

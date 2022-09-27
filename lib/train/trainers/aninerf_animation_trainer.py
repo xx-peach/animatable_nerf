@@ -9,27 +9,34 @@ from lib.utils.blend_utils import *
 
 
 class NetworkWrapper(nn.Module):
+    """ NetworkWrapper for The Second Stage of Training
+    just to train a new `net.novel_pose_bw` for novel poses, no need to
+    bother with render loss, namely we don't need to compute rgb+sigma,
+    the only concern here is blend weights, 这里做的事情就是用第一阶段在 train
+    frames 上训练好的 net.bw 来训练一个新的给 novel poses 用的 bw
+    """
     def __init__(self, net):
         super(NetworkWrapper, self).__init__()
-
+        # 'lib/networks/bw_deform/tpose_nerf_network.py'
         self.net = net
-        self.renderer = tpose_renderer.Renderer(self.net)
-
+        self.renderer = tpose_renderer.Renderer(self.net)   #? no use
+        # L1 consistency loss between blend weight fields
         self.bw_crit = torch.nn.functional.smooth_l1_loss
-        self.img2mse = lambda x, y: torch.mean((x - y)**2)
-
+        self.img2mse = lambda x, y: torch.mean((x - y)**2)  #? no use
+        # fix the pre-trained neural blend weight field for training frames
         for param in self.net.parameters():
             param.requires_grad = False
-
+        # only train novel_pose_bw for novel poses
         for param in self.net.novel_pose_bw.parameters():
             param.requires_grad = True
 
     def forward(self, batch):
-        wpts = get_sampling_points(batch['wbounds'])
-        ppts = wpts_to_ppts(wpts, batch)
-        tpts = get_sampling_points(batch['tbounds'])
-
+        # sample in observation space
+        wpts = get_sampling_points(batch['wbounds'])        # (batch_size, nrays*N_samples, 3)
+        ppts = wpts_to_ppts(wpts, batch)                    # (batch_size, nrays*N_samples, 3)
         pbw0, tbw0 = ppts_to_tpose(self.net, ppts, batch)
+        # sample in canonical space
+        tpts = get_sampling_points(batch['tbounds'])        # (batch_size, nrays*N_samples, 3)
         pbw1, tbw1 = tpose_to_ppts(self.net, tpts, batch)
         ret = {'pbw0': pbw0}
 
@@ -115,21 +122,28 @@ def tpose_to_ppts(net, tpose, batch):
 
 
 def get_sampling_points(bounds):
-    sh = bounds.shape
-    min_xyz = bounds[:, 0]
-    max_xyz = bounds[:, 1]
+    """ Sample nrays*N_samples Points inside the 3d Bounding Box
+        随便采样就行, 我们只要将其转化到 T-pose 然后和训练好的 w^can 算 loss
+    Arguments:
+        bounds - (batch_size, 2, 3), bounding points of 6890 vertices
+    Returns:
+        pts - (batch_size, N_samples, 3), N_samples=1024*64 sampled points in bounds' coordinates
+    """
+    sh = bounds.shape       # (batch_size, 2, 3)
+    min_xyz = bounds[:, 0]  # (batch_size, 3)
+    max_xyz = bounds[:, 1]  # (batch_size, 3)
     N_samples = 1024 * 64
-    x_vals = torch.rand([sh[0], N_samples])
-    y_vals = torch.rand([sh[0], N_samples])
-    z_vals = torch.rand([sh[0], N_samples])
-    vals = torch.stack([x_vals, y_vals, z_vals], dim=2)
+    x_vals = torch.rand([sh[0], N_samples])     # (batch_size, N_samples)
+    y_vals = torch.rand([sh[0], N_samples])     # (batch_size, N_samples)
+    z_vals = torch.rand([sh[0], N_samples])     # (batch_size, N_samples)
+    vals = torch.stack([x_vals, y_vals, z_vals], dim=2)     # (batch_size, N_samples, 3)
     vals = vals.to(bounds.device)
     pts = (max_xyz - min_xyz)[:, None] * vals + min_xyz[:, None]
     return pts
 
 
 def wpts_to_ppts(pts, batch):
-    """transform points from the world space to the pose space"""
+    """Transform Points from the World Space to the Pose Space"""
     Th = batch['Th']
     pts = pts - Th
     R = batch['R']

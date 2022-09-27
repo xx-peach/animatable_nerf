@@ -47,43 +47,60 @@ class Network(nn.Module):
         return features
 
     def calculate_residual_deformation(self, tpose, batch):
-        pts = embedder.xyz_embedder(tpose)
-        pts = pts.transpose(1, 2)
-        latent = batch['poses']
-        latent = latent[..., None].expand(*latent.shape, pts.size(2))
-        features = torch.cat((pts, latent), dim=1)
+        """ Neural Displacement Field in Canonical Space
+        Arguments:
+            tpose - (batch_size, n', 3), sample points after transferred to big-pose(first to T-pose, and then to big-pose)
+            batch - a dict(), we need its ['pose'] to predict residual displacement in big-pose
+        Returns:
+            resd - (batch_size, n', 3), residual displacement \Delta x in big-pose
+        """
+        # perform positional encoding to big-pose sample points
+        pts = embedder.xyz_embedder(tpose)          # (batch_size, n', 63)
+        pts = pts.transpose(1, 2)                   # (batch_size, 63, n')
+        # fetch current frame's human pose (72,) from batch
+        latent = batch['poses']                     # (batch_size, 72)
+        latent = latent[..., None].expand(*latent.shape, pts.size(2))   # (batch_size, 72, n')
+        features = torch.cat((pts, latent), dim=1)  # (batch_size, 72+63, n')
 
         net = features
         for i, l in enumerate(self.resd_linears):
             net = self.actvn(self.resd_linears[i](net))
             if i in self.skips:
                 net = torch.cat((features, net), dim=1)
-        resd = self.resd_fc(net)
-        resd = resd.transpose(1, 2)
-        resd = 0.05 * torch.tanh(resd)
+        resd = self.resd_fc(net)                    # (batch_size, 3, n')
+        resd = resd.transpose(1, 2)                 # (batch_size, n', 3)
+        resd = 0.05 * torch.tanh(resd)              # (batch_size, n', 3)
         return resd
 
     def pose_points_to_tpose_points(self, pose_pts, pose_dirs, batch):
+        """ Transform Points from the Pose Space to the T-pose Space
+        Arguments:
+            pose_pts  - (batch_size, n', 3), filtered sampled points in smpl coordinate
+            pose_dirs - (batch_size, n', 3), filtered sampled points' view directions in smpl coordinate
+            batch     - a dict() with ['A'] and ['big_A'](大字型 human pose) we want
+        Returns:
+            tpose        - (batch_size, n', 3), final accurate sample points coordinates in big-pose
+            tpose_dirs   - (batch_size, n', 3), corresponding view directions transferred to big-pose
+            init_bigpose - (batch_size, n', 3), coarse sample points coordinates in big-pose
+            resd         - (batch_size, n', 3), residual displacement \Delta x in big-pose
         """
-        pose_pts: n_batch, n_point, 3
-        """
-        # initial blend weights of points at i
+        # initial blend weights of points at i, of shape (batch_size, chunk*N_samples, 24)
         pbw, _ = sample_utils.sample_blend_closest_points(pose_pts, batch['pvertices'], batch['weights'])
-        pbw = pbw.permute(0, 2, 1)
+        pbw = pbw.permute(0, 2, 1)          # (batch_size, 24, chunk*N_samples)
 
-        # transform points from i to i_0
-        init_tpose = pose_points_to_tpose_points(pose_pts, pbw,
-                                                 batch['A'])
-        init_bigpose = tpose_points_to_pose_points(init_tpose, pbw,
-                                                   batch['big_A'])
+        # transform points from i to i_0(current pose to T pose)
+        init_tpose = pose_points_to_tpose_points(pose_pts, pbw, batch['A'])         # (batch_size, n', 3)
+        # transform points from T-pose just computed to big pose(预定义的大字型 pose)
+        init_bigpose = tpose_points_to_pose_points(init_tpose, pbw, batch['big_A']) # (batch_size, n', 3)
+        # predict residual displacement \Delta x of each sample point who has been transferred into big-pose
         resd = self.calculate_residual_deformation(init_bigpose, batch)
-        tpose = init_bigpose + resd
+        # final accurate sample points coordinates in big-pose
+        tpose = init_bigpose + resd                                                 # (batch_size, n', 3)
 
+        # transfer the view directions to T-pose and big-pose is specified
         if cfg.tpose_viewdir and pose_dirs is not None:
-            init_tdirs = pose_dirs_to_tpose_dirs(pose_dirs, pbw,
-                                                 batch['A'])
-            tpose_dirs = tpose_dirs_to_pose_dirs(init_tdirs, pbw,
-                                                 batch['big_A'])
+            init_tdirs = pose_dirs_to_tpose_dirs(pose_dirs, pbw, batch['A'])
+            tpose_dirs = tpose_dirs_to_pose_dirs(init_tdirs, pbw, batch['big_A'])
         else:
             tpose_dirs = None
 
@@ -137,40 +154,53 @@ class Network(nn.Module):
         return gradients, y[None]
 
     def forward(self, wpts, viewdir, dists, batch):
-        # transform points from the world space to the pose space
-        wpts = wpts[None]
-        pose_pts = world_points_to_pose_points(wpts, batch['R'], batch['Th'])
-        viewdir = viewdir[None]
-        pose_dirs = world_dirs_to_pose_dirs(viewdir, batch['R'])
+        ###########################################################
+        # transform points from the world space to the pose space #
+        ###########################################################
+        wpts = wpts[None]               # (1, batch_size*chunk*N_samples, 3), #! 只是因为 batch_size==1 才没错
+        pose_pts = world_points_to_pose_points(wpts, batch['R'], batch['Th'])   # (batch_size, batch_size*chunk*N_samples, 3) <- (batch_size, chunk*N_samples, 3)
+        viewdir = viewdir[None]         # (1, batch_size*chunk*N_samples, 3), #! 只是因为 batch_size==1 才没错
+        pose_dirs = world_dirs_to_pose_dirs(viewdir, batch['R'])                # (batch_size, batch_size*chunk*N_samples, 3) <- (batch_size, chunk*N_samples, 3)
 
+        ##########################################################################
+        # filter those points with larger initial blend weights than cfg.norm_th #
+        ##########################################################################
         with torch.no_grad():
+            # pnorm: (batch_size, chunk*N_samples, 1), each sample point 与 k 个 nearest neighbors 之间的加权距离
             pbw, pnorm = sample_utils.sample_blend_closest_points(pose_pts, batch['pvertices'], batch['weights'])
             pnorm = pnorm[..., 0]
             norm_th = 0.1
             pind = pnorm < norm_th
             pind[torch.arange(len(pnorm)), pnorm.argmin(dim=1)] = True
-            pose_pts = pose_pts[pind][None]
-            viewdir = viewdir[pind][None]
-            pose_dirs = pose_dirs[pind][None]
+            pose_pts = pose_pts[pind][None]     # (batch_size, n', 3)
+            viewdir = viewdir[pind][None]       # (batch_size, n', 3), world view directions
+            pose_dirs = pose_dirs[pind][None]   # (batch_size, n', 3), smpl view directions
 
-        # transform points from the pose space to the tpose space
-        tpose, tpose_dirs, init_bigpose, resd = self.pose_points_to_tpose_points(
-            pose_pts, pose_dirs, batch)
-        tpose = tpose[0]
+        #####################################################################
+        # transform points from the pose space to the tpose(big-pose) space #
+        #####################################################################
+        tpose, tpose_dirs, init_bigpose, resd = self.pose_points_to_tpose_points(pose_pts, pose_dirs, batch)
+        tpose = tpose[0]                # (n', 3), 因为 batch_size = 1
         if cfg.tpose_viewdir:
-            viewdir = tpose_dirs[0]
+            viewdir = tpose_dirs[0]     # (n', 3), 因为 batch_size = 1
         else:
-            viewdir = viewdir[0]
-        ret = self.tpose_human(tpose, viewdir, dists, batch)
+            viewdir = viewdir[0]        # (n', 3), 因为 batch_size = 1
+        
+        #################################################################################################
+        # construct a sdf network and rendering network in big-pose, a pre-defined fixed big-pose scene #
+        #################################################################################################
+        ret = self.tpose_human(tpose, viewdir, dists, batch)        # (n', 4)
 
         ind = ret['sdf'][:, 0].detach().abs() < 0.02
         init_bigpose = init_bigpose[0][ind][None].detach().clone()
 
         if ret['raw'].requires_grad and ind.sum() != 0:
-            observed_gradients, _ = self.gradient_of_deformed_sdf(
-                init_bigpose, batch)
+            observed_gradients, _ = self.gradient_of_deformed_sdf(init_bigpose, batch)
             ret.update({'observed_gradients': observed_gradients})
 
+        ###############################################################################################
+        # further filter, 将由 neural blend weights 转化到 canonical space 的超出原本 big-pose 范围的点剔除 #
+        ###############################################################################################
         tbounds = batch['tbounds'][0]
         tbounds[0] -= 0.05
         tbounds[1] += 0.05
@@ -179,14 +209,17 @@ class Network(nn.Module):
         outside = torch.sum(inside, dim=1) != 3
         ret['raw'][outside] = 0
 
+        ##################################################################################################
+        # fill those points who have been filtered(initial blend filter + big-pose bbox filter) out by 0 #
+        ##################################################################################################
         n_batch, n_point = wpts.shape[:2]
-        raw = torch.zeros([n_batch, n_point, 4]).to(wpts)
+        raw = torch.zeros([n_batch, n_point, 4]).to(wpts)       # (batch_size, chunk*N_samples, 4)
         raw[pind] = ret['raw']
-        sdf = 10 * torch.ones([n_batch, n_point, 1]).to(wpts)
+        sdf = 10 * torch.ones([n_batch, n_point, 1]).to(wpts)   # (batch_size, chunk*N_samples, 1)
         sdf[pind] = ret['sdf']
-        ret.update({'raw': raw, 'sdf': sdf, 'resd': resd})
+        ret.update({'raw': raw, 'sdf': sdf, 'resd': resd})      # (batch_size, chunk*N_samples, 3)
 
-        ret.update({'gradients': ret['gradients'][None]})
+        ret.update({'gradients': ret['gradients'][None]})       # (batch_size, n', 3)
 
         return ret
 
@@ -253,15 +286,32 @@ class TPoseHuman(nn.Module):
         return val
 
     def forward(self, wpts, viewdir, dists, batch):
-        # calculate sdf
+        """ Compute Sdf, Normal, RGB Color and Alpha
+        Arguments:
+            wpts    - (n', 3), filtered sample points in big-pose
+            viewdir - (n', 3), corresponding view direction of each sample point
+            dists   - (batch_size*chunk*N_samples,), distance between sample points along the same ray
+                      #? 这个 dist 就没有用到, 按照 alpha 的计算公式是要用的, 但是下面的代码里改成了 * 0.05
+            batch   - a dict(), with original ['latent_index']
+        Returns:
+            ret {
+                raw       - (n', 4), rgb color + computed alpha
+                sdf       - (n', 1), signed distance of each point
+                gradients - (n', 3), normal vector of each point
+            }
+        """
+        ####################################
+        # calculate sdf and feature vector #
+        ####################################
         wpts.requires_grad_()
         with torch.enable_grad():
             sdf_nn_output = self.sdf_network(wpts, batch)
-            sdf = sdf_nn_output[:, :1]
+            sdf = sdf_nn_output[:, :1]                  # (n', 1)
+        feature_vector = sdf_nn_output[:, 1:]           # (n', 256)
 
-        feature_vector = sdf_nn_output[:, 1:]
-
-        # calculate normal
+        ####################
+        # calculate normal #
+        ####################
         d_output = torch.ones_like(sdf, requires_grad=False, device=sdf.device)
         gradients = torch.autograd.grad(outputs=sdf,
                                         inputs=wpts,
@@ -271,19 +321,25 @@ class TPoseHuman(nn.Module):
                                         only_inputs=True)[0]
         # gradients = self.sdf_network.gradient(wpts, batch)[:, 0]
 
-        # calculate alpha
-        wpts = wpts.detach()
-        beta = self.beta_network(wpts).clamp(1e-9, 1e6)
-        alpha = self.sdf_to_alpha(sdf, beta)
-        raw2alpha = lambda raw, dists, act_fn=F.relu: 1. - torch.exp(-act_fn(
-            raw) * 0.005)
-        alpha = raw2alpha(alpha[:, 0], dists)
+        ###################################
+        # calculate alpha(volume density) #
+        ###################################
+        wpts = wpts.detach()                            # (n', 3), 其实对下面没有作用
+        beta = self.beta_network(wpts).clamp(1e-9, 1e6) # fetch current beta, 传进去的 wpts 没有用
+        alpha = self.sdf_to_alpha(sdf, beta)            # (n', 1), volume density 其实是 \sigma
+        raw2alpha = lambda raw, dists, act_fn=F.relu: 1. - torch.exp(-act_fn(raw) * 0.005)
+        alpha = raw2alpha(alpha[:, 0], dists)           # (n',), 由 sigma 算得的 alpha
 
-        # calculate color
+        ###################
+        # calculate color #
+        ###################
         ind = batch['latent_index']
         rgb = self.color_network(wpts, gradients, viewdir, feature_vector, ind)
 
-        raw = torch.cat((rgb, alpha[:, None]), dim=1)
+        ##############################################
+        # return rgb color, alpha, sdf and gradients #
+        ##############################################
+        raw = torch.cat((rgb, alpha[:, None]), dim=1)   # (n', 4)
         ret = {'raw': raw, 'sdf': sdf, 'gradients': gradients}
 
         return ret
@@ -293,23 +349,23 @@ class SDFNetwork(nn.Module):
     def __init__(self):
         super(SDFNetwork, self).__init__()
 
-        d_in = 3
-        d_out = 257
-        d_hidden = 256
-        n_layers = 8
+        d_in = 3            # input channel, default = 3
+        d_out = 257         # output channel, default = 1+256
+        d_hidden = 256      # hidden layer channels, default = 256
+        n_layers = 8        # number of layers, default = 256
 
+        # each layer's channel from input to output
         dims = [d_in] + [d_hidden for _ in range(n_layers)] + [d_out]
 
+        # instantiate the embedder for input sample points
         self.embed_fn_fine = None
-
         multires = 6
         if multires > 0:
-            embed_fn, input_ch = embedder.get_embedder(multires,
-                                                       input_dims=d_in)
+            embed_fn, input_ch = embedder.get_embedder(multires, input_dims=d_in)
             self.embed_fn_fine = embed_fn
             dims[0] = input_ch
 
-        skip_in = [4]
+        skip_in = [4]       # similar to NeRF, resblock index, default = [4]
         bias = 0.5
         scale = 1
         geometric_init = True

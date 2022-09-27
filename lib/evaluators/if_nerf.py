@@ -58,8 +58,8 @@ class Evaluator:
         return ssim
 
     def evaluate(self, output, batch):
-        rgb_pred = output['rgb_map'][0].detach().cpu().numpy()
-        rgb_gt = batch['rgb'][0].detach().cpu().numpy()
+        rgb_pred = output['rgb_map'][0].detach().cpu().numpy()  # (nrays, 3)
+        rgb_gt = batch['rgb'][0].detach().cpu().numpy()         # (nrays, 3)
 
         if rgb_gt.sum() == 0:
             return

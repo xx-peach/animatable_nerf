@@ -32,42 +32,45 @@ The command lines for test are recorded in [test.sh](test.sh).
 Take the test on `S9` as an example.
 
 1. Download the corresponding pretrained models, and put it to `$ROOT/data/trained_model/deform/aninerf_s9p/latest.pth` and `$ROOT/data/trained_model/deform/aninerf_s9p_full/latest.pth`.
+
 2. Test on training human poses:
 
-    ```shell
-    python run.py --type evaluate --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p resume True
-    ```
+   ```shell
+   python run.py --type evaluate --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p resume True
+   ```
 
 3. Test on unseen human poses:
 
-    ```shell
-    python run.py --type evaluate --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p_full resume True aninerf_animation True init_aninerf aninerf_s9p test_novel_pose True
-    ```
+   ```shell
+   python run.py --type evaluate --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p_full resume True aninerf_animation True init_aninerf aninerf_s9p test_novel_pose True
+   ```
 
 ### Visualization on Human3.6M
 
 Take the visualization on `S9` as an example.
 
 1. Download the corresponding pretrained models, and put it to `$ROOT/data/trained_model/deform/aninerf_s9p/latest.pth` and `$ROOT/data/trained_model/deform/aninerf_s9p_full/latest.pth`.
+
 2. Visualization:
-    * Visualize novel views of the 0-th frame
 
-    ```shell
-    python run.py --type visualize --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p resume True vis_novel_view True begin_ith_frame 0
-    ```
+   * Visualize novel views of the 0-th frame
 
-    * Visualize views of dynamic humans with 3-th camera
+   ```shell
+   python run.py --type visualize --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p resume True vis_novel_view True begin_ith_frame 0
+   ```
 
-    ```shell
-    python run.py --type visualize --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p resume True vis_pose_sequence True test_view "3,"
-    ```
+   * Visualize views of dynamic humans with 3-th camera
 
-    * Visualize mesh
+   ```shell
+   python run.py --type visualize --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p resume True vis_pose_sequence True test_view "3,"
+   ```
 
-    ```shell
-    # generate meshes
-    python run.py --type visualize --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p vis_posed_mesh True
-    ```
+   * Visualize mesh
+
+   ```shell
+   # generate meshes
+   python run.py --type visualize --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p vis_posed_mesh True
+   ```
 
 3. The results of visualization are located at `$ROOT/data/novel_view/aninerf_s9p` and `$ROOT/data/novel_pose/aninerf_s9p`.
 
@@ -77,19 +80,19 @@ Take the training on `S9` as an example. The command lines for training are reco
 
 1. Train:
 
-    ```shell
-    # training
-    python train_net.py --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p resume False
-
-    # training the blend weight fields of unseen human poses
-    python train_net.py --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p_full resume False aninerf_animation True init_aninerf aninerf_s9p
-    ```
+   ```shell
+   # training
+   python train_net.py --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p resume False
+   
+   # training the blend weight fields of unseen human poses
+   python train_net.py --cfg_file configs/aninerf_s9p.yaml exp_name aninerf_s9p_full resume False aninerf_animation True init_aninerf aninerf_s9p
+   ```
 
 2. Tensorboard:
 
-    ```shell
-    tensorboard --logdir data/record/deform
-    ```
+   ```shell
+   tensorboard --logdir data/record/deform
+   ```
 
 ## Run the code on ZJU-MoCap
 
@@ -104,42 +107,45 @@ The command lines for test are recorded in [test.sh](test.sh).
 Take the test on `313` as an example.
 
 1. Download the corresponding pretrained models, and put it to `$ROOT/data/trained_model/deform/aninerf_313/latest.pth` and `$ROOT/data/trained_model/deform/aninerf_313_full/latest.pth`.
+
 2. Test on training human poses:
 
-    ```shell
-    python run.py --type evaluate --cfg_file configs/aninerf_313.yaml exp_name aninerf_313 resume True
-    ```
+   ```shell
+   python run.py --type evaluate --cfg_file configs/aninerf_313.yaml exp_name aninerf_313 resume True
+   ```
 
 3. Test on unseen human poses:
 
-    ```shell
-    python run.py --type evaluate --cfg_file configs/aninerf_313.yaml exp_name aninerf_313_full resume True aninerf_animation True init_aninerf aninerf_313 test_novel_pose True
-    ```
+   ```shell
+   python run.py --type evaluate --cfg_file configs/aninerf_313.yaml exp_name aninerf_313_full resume True aninerf_animation True init_aninerf aninerf_313 test_novel_pose True
+   ```
 
 ### Visualization on ZJU-MoCap
 
 Take the visualization on `313` as an example.
 
 1. Download the corresponding pretrained models, and put it to `$ROOT/data/trained_model/deform/aninerf_313/latest.pth` and `$ROOT/data/trained_model/deform/aninerf_313_full/latest.pth`.
+
 2. Visualization:
-    * Visualize novel views of the 0-th frame
 
-    ```shell
-    python run.py --type visualize --cfg_file configs/aninerf_313.yaml exp_name aninerf_313 resume True vis_novel_view True begin_ith_frame 0
-    ```
+   * Visualize novel views of the 0-th frame
 
-    * Visualize views of dynamic humans with 0-th camera
+   ```shell
+   python run.py --type visualize --cfg_file configs/aninerf_313.yaml exp_name aninerf_313 resume True vis_novel_view True begin_ith_frame 0
+   ```
 
-    ```shell
-    python run.py --type visualize --cfg_file configs/aninerf_313.yaml exp_name aninerf_313 resume True vis_pose_sequence True test_view "0,"
-    ```
+   * Visualize views of dynamic humans with 0-th camera
 
-    * Visualize mesh
+   ```shell
+   python run.py --type visualize --cfg_file configs/aninerf_313.yaml exp_name aninerf_313 resume True vis_pose_sequence True test_view "0,"
+   ```
 
-    ```shell
-    # generate meshes
-    python run.py --type visualize --cfg_file configs/aninerf_313.yaml exp_name aninerf_313 vis_posed_mesh True
-    ```
+   * Visualize mesh
+
+   ```shell
+   # generate meshes
+   python run.py --type visualize --cfg_file configs/aninerf_313.yaml exp_name aninerf_313 vis_posed_mesh True
+   ```
 
 3. The results of visualization are located at `$ROOT/data/novel_view/aninerf_313` and `$ROOT/data/novel_pose/aninerf_313`.
 
@@ -149,19 +155,19 @@ Take the training on `313` as an example. The command lines for training are rec
 
 1. Train:
 
-    ```shell
-    # training
-    python train_net.py --cfg_file configs/aninerf_313.yaml exp_name aninerf_313 resume False
-
-    # training the blend weight fields of unseen human poses
-    python train_net.py --cfg_file configs/aninerf_313.yaml exp_name aninerf_313_full resume False aninerf_animation True init_aninerf aninerf_313
-    ```
+   ```shell
+   # training
+   python train_net.py --cfg_file configs/aninerf_313.yaml exp_name aninerf_313 resume False
+   
+   # training the blend weight fields of unseen human poses
+   python train_net.py --cfg_file configs/aninerf_313.yaml exp_name aninerf_313_full resume False aninerf_animation True init_aninerf aninerf_313
+   ```
 
 2. Tensorboard:
 
-    ```shell
-    tensorboard --logdir data/record/deform
-    ```
+   ```shell
+   tensorboard --logdir data/record/deform
+   ```
 
 ## Extended Version
 
